@@ -66,7 +66,7 @@ const HTML = /* html */ `<!doctype html>
 </style>
 </head>
 <body>
-<header><span id="live" class="dot off"></span><h1>Neon CPU usage hours — consumption_history</h1></header>
+<header><span id="live" class="dot off"></span><h1>Neon CPU usage hours — consumption_history</h1><label class="chk" style="margin-left:auto"><input id="cumulative" type="checkbox"/>Cumulative</label></header>
 <form id="f">
   <label>API key (napi_…)<input id="key" type="password" size="30" placeholder="napi_..." autocomplete="off"/></label>
   <label>Org<select id="org"></select></label>
@@ -86,7 +86,7 @@ const HTML = /* html */ `<!doctype html>
 <script>
 const $ = s => document.querySelector(s)
 const KEY_LS = 'neon_api_key'
-let charts = {}, pollTimer = null, busy = false
+let charts = {}, pollTimer = null, busy = false, cumulative = false
 
 const METRICS = [
   { id:'cores',   title:'CPU used', sub:'avg cores = compute_time_seconds / bucket (set granularity=hourly for finer curve)', color:'#58a6ff',
@@ -206,8 +206,9 @@ async function load(){
   for(const m of METRICS){
     const data = rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) }))
     const ch = charts[m.id]
-    ch.data.datasets[0].data = data
-    ch.update('none')                                  // preserves zoom
+    let acc = 0
+    ch.data.datasets[0].data = cumulative ? data.map(d=>({ x:d.x, y:(acc+=d.y) })) : data
+    ch.update('none')                                  // preserves zoom; stats below use raw per-bucket values
     const sum = data.reduce((a,d)=>a+d.y,0)
     const avg = sum/data.length
     const last = data[data.length-1]?.y ?? 0
@@ -255,6 +256,7 @@ function setPolling(on){
   $('#reset').addEventListener('click', ()=> Object.values(charts).forEach(c=>c.resetZoom()))
   $('#forget').addEventListener('click', ()=>{ localStorage.removeItem(KEY_LS); $('#key').value=''; setPolling(false); $('#poll').checked=false; setStatus('key forgotten') })
   $('#poll').addEventListener('change', e=> setPolling(e.target.checked))
+  $('#cumulative').addEventListener('change', e=>{ cumulative=e.target.checked; tick() })
   $('#f').addEventListener('submit', e=>{ e.preventDefault(); tick() })
 
   if(saved){
