@@ -83,6 +83,8 @@ const HTML = /* html */ `<!doctype html>
 const $ = s => document.querySelector(s)
 const KEY_LS = 'neon_api_key'
 let charts = {}, pollTimer = null, busy = false, cumulative = false
+let projNames = {}                                   // project_id -> display name (filled by loadProjects)
+const PROJ_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f85149','#39c5cf','#db61a2','#e3b341','#a371f7','#7ee787']
 
 const METRICS = [
   { id:'cores',   title:'CPU used', sub:'avg cores = compute_time_seconds / bucket (set granularity=hourly for finer curve)', color:'#58a6ff',
@@ -144,6 +146,7 @@ async function loadOrgs(){
 async function loadProjects(orgId){
   const j = await api('/projects?org_id='+encodeURIComponent(orgId))
   const ps = j.projects || []
+  ps.forEach(p=>{ projNames[p.id] = p.name || p.id })
   $('#project').innerHTML = '<option value="">all projects</option>' +
     ps.map(p=>'<option value="'+p.id+'">'+(p.name||p.id)+'</option>').join('')
   return ps
@@ -169,7 +172,7 @@ function buildGrid(){
         },
         plugins:{
           legend:{display:false},
-          tooltip:{ callbacks:{ label:c=>c.parsed.y.toFixed(m.dp)+' '+m.unit } },
+          tooltip:{ callbacks:{ label:c=>{ const n=c.dataset.label; return (n&&n!==m.unit?n+': ':'')+c.parsed.y.toFixed(m.dp)+' '+m.unit } } },
           zoom:{ zoom:{ drag:{enabled:true,backgroundColor:'rgba(88,166,255,.15)',borderColor:'#58a6ff',borderWidth:1}, mode:'x' }, pan:{enabled:false} }
         }
       }
@@ -180,6 +183,14 @@ function buildGrid(){
 function rowsFrom(j){
   return (j.projects||[]).flatMap(p=>(p.periods||[]).flatMap(pe=>pe.consumption||[]))
     .sort((a,b)=>a.timeframe_start.localeCompare(b.timeframe_start))
+}
+
+// One series per project (preserves identity for the stacked/cumulative view).
+function seriesFrom(j){
+  return (j.projects||[]).map(p=>({
+    id: p.project_id,
+    rows: (p.periods||[]).flatMap(pe=>pe.consumption||[]).sort((a,b)=>a.timeframe_start.localeCompare(b.timeframe_start))
+  }))
 }
 
 async function load(){
@@ -198,13 +209,28 @@ async function load(){
   if(!rows.length){ setStatus('no data in range', true); return }
 
   const span = spanSec()
+  const series = seriesFrom(j)
   if(!Object.keys(charts).length) buildGrid()
   for(const m of METRICS){
-    const data = rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) }))
     const ch = charts[m.id]
-    let acc = 0
-    ch.data.datasets[0].data = cumulative ? data.map(d=>({ x:d.x, y:(acc+=d.y) })) : data
-    ch.update('none')                                  // preserves zoom; stats below use raw per-bucket values
+    if(cumulative){                                    // stack one area per project — top of stack = total across all cpus
+      ch.options.scales.y.stacked = true
+      ch.options.plugins.legend.display = series.length > 1
+      ch.data.datasets = series.map((s,i)=>{
+        const c = PROJ_COLORS[i%PROJ_COLORS.length]
+        return { label: projNames[s.id]||s.id, stack:'all',
+          data: s.rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) })),
+          borderColor:c, backgroundColor:c+'55', fill:true, tension:.25, pointRadius:0, borderWidth:1 }
+      })
+    } else {
+      ch.options.scales.y.stacked = false
+      ch.options.plugins.legend.display = false
+      ch.data.datasets = [{ label:m.unit, data: rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) })),
+        borderColor:m.color, backgroundColor:m.color+'22', fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }]
+    }
+    ch.update('none')                                  // preserves zoom
+
+    const data = rows.map(r=>({ y:m.val(r,span) }))    // stats from merged rows (total across projects)
     const sum = data.reduce((a,d)=>a+d.y,0)
     const avg = sum/data.length
     const last = data[data.length-1]?.y ?? 0
