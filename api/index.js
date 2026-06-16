@@ -47,12 +47,18 @@ const HTML = /* html */ `<!doctype html>
   .card { border:1px solid #21262d; border-radius:10px; padding:12px 14px; background:#0f141a }
   .card-head { display:flex; align-items:center; gap:10px; margin-bottom:2px }
   .card h2 { font-size:12px; margin:0; font-weight:600 }
-  .cum { margin-left:auto; padding:3px 7px; border-radius:999px; background:#21262d; border-color:#30363d; color:#8b949e; font-size:11px; font-weight:600 }
-  .cum.on { background:#238636; border-color:#2ea043; color:#fff }
+  .chart-actions { margin-left:auto; display:flex; gap:6px; align-items:center }
+  .chart-actions button { padding:3px 7px; border-radius:999px; background:#21262d; border-color:#30363d; color:#8b949e; font-size:11px; font-weight:600 }
+  .chart-actions button:hover { filter:brightness(1.15) }
+  .chart-actions button.on { background:#238636; border-color:#2ea043; color:#fff }
+  .full.on { background:#da3633; border-color:#f85149; color:#fff }
   .card .sub { font-size:11px; color:#8b949e; margin-bottom:8px }
   .card .big { font-size:18px; font-weight:600 }
   .card .big small { font-size:11px; color:#8b949e; font-weight:400; margin-left:6px }
-  canvas { width:100% !important }
+  canvas { width:100% !important; height:150px !important }
+  body.full-chart { overflow:hidden }
+  .card.fullscreen { position:fixed; left:0; right:0; top:var(--full-top,120px); bottom:0; z-index:20; border-radius:0; border-left:0; border-right:0; display:flex; flex-direction:column; padding:14px 20px 18px }
+  .card.fullscreen canvas { flex:1; min-height:0; height:calc(100vh - var(--full-top,120px) - 118px) !important }
   a { color:#58a6ff }
   #totals { padding:14px 20px 0 }
   #totals .hint { color:#6e7681; font-size:12px }
@@ -158,7 +164,9 @@ async function loadProjects(orgId){
 function buildGrid(){
   $('#grid').innerHTML = METRICS.map(m=>
     '<div class="card"><div class="card-head"><h2>'+m.title+'</h2>'+
+    '<div class="chart-actions">'+
     (m.cumulative ? '<button type="button" class="cum" data-cum="'+m.id+'" aria-pressed="false">cumulative</button>' : '')+
+    '<button type="button" class="full" data-full="'+m.id+'" aria-pressed="false">fullscreen</button></div>'+
     '</div><div class="sub">'+m.sub+'</div>'+
     '<div class="big" id="big-'+m.id+'">–</div>'+
     '<canvas id="cv-'+m.id+'" height="150"></canvas></div>'
@@ -169,7 +177,7 @@ function buildGrid(){
       data:{ datasets:[{ label:m.unit, data:[], borderColor:m.color, backgroundColor:m.color+'22',
         fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }] },
       options:{
-        responsive:true, animation:false, parsing:false,
+        responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
         interaction:{mode:'index',intersect:false},
         scales:{
           x:{ type:'time', time:{ tooltipFormat:'yyyy-MM-dd HH:mm' }, grid:{color:'#161b22'}, ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:8,color:'#6e7681'} },
@@ -193,6 +201,41 @@ function buildGrid(){
       tick()
     })
   })
+  document.querySelectorAll('[data-full]').forEach(btn=>{
+    btn.addEventListener('click', ()=> setFullscreen(btn.dataset.full))
+  })
+}
+
+function resizeChart(id){
+  setTimeout(()=>{
+    charts[id]?.resize()
+    charts[id]?.update('none')
+  },0)
+}
+
+function setFullscreen(id){
+  const card = $('#cv-'+id).closest('.card')
+  const isOpen = card.classList.contains('fullscreen')
+  document.querySelectorAll('.card.fullscreen').forEach(c=>{
+    const bid = c.querySelector('[data-full]').dataset.full
+    c.classList.remove('fullscreen')
+    c.querySelector('[data-full]').textContent = 'fullscreen'
+    c.querySelector('[data-full]').classList.remove('on')
+    c.querySelector('[data-full]').setAttribute('aria-pressed','false')
+    resizeChart(bid)
+  })
+  if(isOpen){
+    document.body.classList.remove('full-chart')
+    return
+  }
+  document.documentElement.style.setProperty('--full-top', $('#f').getBoundingClientRect().bottom+'px')
+  document.body.classList.add('full-chart')
+  card.classList.add('fullscreen')
+  const btn = card.querySelector('[data-full]')
+  btn.textContent = 'X'
+  btn.classList.add('on')
+  btn.setAttribute('aria-pressed','true')
+  resizeChart(id)
 }
 
 function rowsFrom(j){
