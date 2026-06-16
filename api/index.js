@@ -45,11 +45,20 @@ const HTML = /* html */ `<!doctype html>
   #status.err { color:#f85149 }
   #grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; padding:16px 20px }
   .card { border:1px solid #21262d; border-radius:10px; padding:12px 14px; background:#0f141a }
-  .card h2 { font-size:12px; margin:0 0 2px; font-weight:600 }
+  .card-head { display:flex; align-items:center; gap:10px; margin-bottom:2px }
+  .card h2 { font-size:12px; margin:0; font-weight:600 }
+  .chart-actions { margin-left:auto; display:flex; gap:6px; align-items:center }
+  .chart-actions button { padding:3px 7px; border-radius:999px; background:#21262d; border-color:#30363d; color:#8b949e; font-size:11px; font-weight:600 }
+  .chart-actions button:hover { filter:brightness(1.15) }
+  .chart-actions button.on { background:#238636; border-color:#2ea043; color:#fff }
+  .full.on { background:#da3633; border-color:#f85149; color:#fff }
   .card .sub { font-size:11px; color:#8b949e; margin-bottom:8px }
   .card .big { font-size:18px; font-weight:600 }
   .card .big small { font-size:11px; color:#8b949e; font-weight:400; margin-left:6px }
-  canvas { width:100% !important }
+  canvas { width:100% !important; height:150px !important }
+  body.full-chart { overflow:hidden }
+  .card.fullscreen { position:fixed; left:0; right:0; top:var(--full-top,120px); bottom:0; z-index:20; border-radius:0; border-left:0; border-right:0; display:flex; flex-direction:column; padding:14px 20px 18px }
+  .card.fullscreen canvas { flex:1; min-height:0; height:calc(100vh - var(--full-top,120px) - 118px) !important }
   a { color:#58a6ff }
   #totals { padding:14px 20px 0 }
   #totals .hint { color:#6e7681; font-size:12px }
@@ -62,7 +71,7 @@ const HTML = /* html */ `<!doctype html>
 </style>
 </head>
 <body>
-<header><span id="live" class="dot off"></span><h1>Neon CPU usage hours — consumption_history</h1><label class="chk" style="margin-left:auto"><input id="cumulative" type="checkbox"/>Cumulative</label></header>
+<header><span id="live" class="dot off"></span><h1>Neon usage — consumption_history</h1></header>
 <form id="f">
   <label>API key (napi_…)<input id="key" type="password" size="30" placeholder="napi_..." autocomplete="off"/></label>
   <label>Org<select id="org"></select></label>
@@ -82,19 +91,19 @@ const HTML = /* html */ `<!doctype html>
 <script>
 const $ = s => document.querySelector(s)
 const KEY_LS = 'neon_api_key'
-let charts = {}, pollTimer = null, busy = false, cumulative = false
+let charts = {}, pollTimer = null, busy = false
+let cumulative = { cpuhours:false, active:false, written:false }
 let projNames = {}                                   // project_id -> display name (filled by loadProjects)
-const PROJ_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f85149','#39c5cf','#db61a2','#e3b341','#a371f7','#7ee787']
 
 const METRICS = [
   { id:'cores',   title:'CPU used', sub:'avg cores = compute_time_seconds / bucket (set granularity=hourly for finer curve)', color:'#58a6ff',
     val:(r,span)=>r.compute_time_seconds/span, unit:'cores', dp:2, peak:true },
   { id:'cpuhours', title:'CPU usage hours', sub:'compute-hours = compute_time_seconds / 3600 (CPU usage, not utilization)', color:'#388bfd',
-    val:r=>r.compute_time_seconds/3600, unit:'compute-hrs', dp:1, total:true },
+    val:r=>r.compute_time_seconds/3600, unit:'compute-hrs', dp:1, total:true, cumulative:true },
   { id:'active',  title:'Active endpoint time', sub:'active_time_seconds / 3600 (wall time computes ran, NOT CPU-weighted)', color:'#3fb950',
-    val:r=>r.active_time_seconds/3600, unit:'endpoint-hrs', dp:1, total:true },
+    val:r=>r.active_time_seconds/3600, unit:'endpoint-hrs', dp:1, total:true, cumulative:true },
   { id:'written', title:'Data written',  sub:'written_data_bytes / 1e6',                  color:'#d29922',
-    val:r=>r.written_data_bytes/1e6, unit:'MB', dp:1, total:true },
+    val:r=>r.written_data_bytes/1e6, unit:'MB', dp:1, total:true, cumulative:true },
   { id:'storage', title:'Storage size',  sub:'synthetic_storage_size_bytes / 1e9 (snapshot, not summed)', color:'#bc8cff',
     val:r=>r.synthetic_storage_size_bytes/1e9, unit:'GB', dp:2, total:false },
 ]
@@ -154,7 +163,11 @@ async function loadProjects(orgId){
 
 function buildGrid(){
   $('#grid').innerHTML = METRICS.map(m=>
-    '<div class="card"><h2>'+m.title+'</h2><div class="sub">'+m.sub+'</div>'+
+    '<div class="card"><div class="card-head"><h2>'+m.title+'</h2>'+
+    '<div class="chart-actions">'+
+    (m.cumulative ? '<button type="button" class="cum" data-cum="'+m.id+'" aria-pressed="false">cumulative</button>' : '')+
+    '<button type="button" class="full" data-full="'+m.id+'" aria-pressed="false">fullscreen</button></div>'+
+    '</div><div class="sub">'+m.sub+'</div>'+
     '<div class="big" id="big-'+m.id+'">–</div>'+
     '<canvas id="cv-'+m.id+'" height="150"></canvas></div>'
   ).join('')
@@ -164,7 +177,7 @@ function buildGrid(){
       data:{ datasets:[{ label:m.unit, data:[], borderColor:m.color, backgroundColor:m.color+'22',
         fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }] },
       options:{
-        responsive:true, animation:false, parsing:false,
+        responsive:true, maintainAspectRatio:false, animation:false, parsing:false,
         interaction:{mode:'index',intersect:false},
         scales:{
           x:{ type:'time', time:{ tooltipFormat:'yyyy-MM-dd HH:mm' }, grid:{color:'#161b22'}, ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:8,color:'#6e7681'} },
@@ -177,7 +190,52 @@ function buildGrid(){
         }
       }
     })
+    charts[m.id].$metric = m
   }
+  document.querySelectorAll('[data-cum]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.cum
+      cumulative[id] = !cumulative[id]
+      btn.classList.toggle('on', cumulative[id])
+      btn.setAttribute('aria-pressed', cumulative[id] ? 'true' : 'false')
+      tick()
+    })
+  })
+  document.querySelectorAll('[data-full]').forEach(btn=>{
+    btn.addEventListener('click', ()=> setFullscreen(btn.dataset.full))
+  })
+}
+
+function resizeChart(id){
+  setTimeout(()=>{
+    charts[id]?.resize()
+    charts[id]?.update('none')
+  },0)
+}
+
+function setFullscreen(id){
+  const card = $('#cv-'+id).closest('.card')
+  const isOpen = card.classList.contains('fullscreen')
+  document.querySelectorAll('.card.fullscreen').forEach(c=>{
+    const bid = c.querySelector('[data-full]').dataset.full
+    c.classList.remove('fullscreen')
+    c.querySelector('[data-full]').textContent = 'fullscreen'
+    c.querySelector('[data-full]').classList.remove('on')
+    c.querySelector('[data-full]').setAttribute('aria-pressed','false')
+    resizeChart(bid)
+  })
+  if(isOpen){
+    document.body.classList.remove('full-chart')
+    return
+  }
+  document.documentElement.style.setProperty('--full-top', $('#f').getBoundingClientRect().bottom+'px')
+  document.body.classList.add('full-chart')
+  card.classList.add('fullscreen')
+  const btn = card.querySelector('[data-full]')
+  btn.textContent = 'X'
+  btn.classList.add('on')
+  btn.setAttribute('aria-pressed','true')
+  resizeChart(id)
 }
 
 function rowsFrom(j){
@@ -185,12 +243,33 @@ function rowsFrom(j){
     .sort((a,b)=>a.timeframe_start.localeCompare(b.timeframe_start))
 }
 
-// One series per project (preserves identity for the stacked/cumulative view).
-function seriesFrom(j){
-  return (j.projects||[]).map(p=>({
-    id: p.project_id,
-    rows: (p.periods||[]).flatMap(pe=>pe.consumption||[]).sort((a,b)=>a.timeframe_start.localeCompare(b.timeframe_start))
+function bucketPoints(rows,m,span,accumulate){
+  const buckets = new Map()
+  for(const r of rows){
+    const t = r.timeframe_start
+    buckets.set(t, (buckets.get(t)||0) + m.val(r,span))
+  }
+  let acc = 0
+  return [...buckets.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([t,y])=>({
+    x:new Date(t).getTime(),
+    y:accumulate ? (acc+=y) : y
   }))
+}
+
+function renderBig(m,ch){
+  const data = ch.data.datasets[0]?.data || []
+  const isCumulative = m.cumulative && cumulative[m.id]
+  const rawTotal = ch.$rawTotal || 0
+  const avg = data.length ? rawTotal/data.length : 0
+  const last = data[data.length-1]?.y ?? 0
+  const peak = data.reduce((a,d)=>Math.max(a,d.y),0)
+  $('#big-'+m.id).innerHTML = isCumulative
+    ? last.toFixed(m.dp)+' <small>'+m.unit+' cumulative total</small>'
+    : m.total
+    ? rawTotal.toFixed(m.dp)+' <small>'+m.unit+' total · '+avg.toFixed(m.dp)+' avg/bucket · last '+last.toFixed(m.dp)+'</small>'
+    : m.peak
+    ? avg.toFixed(m.dp)+' <small>'+m.unit+' avg · peak '+peak.toFixed(m.dp)+' · last '+last.toFixed(m.dp)+'</small>'
+    : last.toFixed(m.dp)+' <small>'+m.unit+' last · '+avg.toFixed(m.dp)+' avg</small>'
 }
 
 async function load(){
@@ -204,42 +283,27 @@ async function load(){
   })
   const proj = $('#project').value
   if(proj) q.set('project_ids', proj)
+  else {
+    const projectIds = [...$('#project').options].map(o=>o.value).filter(Boolean)
+    if(projectIds.length) q.set('project_ids', projectIds.join(','))
+  }
   const j = await api('/consumption?'+q.toString())
   const rows = rowsFrom(j)
   if(!rows.length){ setStatus('no data in range', true); return }
 
   const span = spanSec()
-  const series = seriesFrom(j)
   if(!Object.keys(charts).length) buildGrid()
   for(const m of METRICS){
     const ch = charts[m.id]
-    if(cumulative){                                    // stack one area per project — top of stack = total across all cpus
-      ch.options.scales.y.stacked = true
-      ch.options.plugins.legend.display = series.length > 1
-      ch.data.datasets = series.map((s,i)=>{
-        const c = PROJ_COLORS[i%PROJ_COLORS.length]
-        return { label: projNames[s.id]||s.id, stack:'all',
-          data: s.rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) })),
-          borderColor:c, backgroundColor:c+'55', fill:true, tension:.25, pointRadius:0, borderWidth:1 }
-      })
-    } else {
-      ch.options.scales.y.stacked = false
-      ch.options.plugins.legend.display = false
-      ch.data.datasets = [{ label:m.unit, data: rows.map(r=>({ x:new Date(r.timeframe_start).getTime(), y:m.val(r,span) })),
-        borderColor:m.color, backgroundColor:m.color+'22', fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }]
-    }
+    const isCumulative = m.cumulative && cumulative[m.id]
+    ch.options.scales.y.stacked = false
+    ch.options.plugins.legend.display = false
+    ch.data.datasets = [{ label:m.unit, data: bucketPoints(rows,m,span,isCumulative),
+      borderColor:m.color, backgroundColor:m.color+'22', fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }]
     ch.update('none')                                  // preserves zoom
 
-    const data = rows.map(r=>({ y:m.val(r,span) }))    // stats from merged rows (total across projects)
-    const sum = data.reduce((a,d)=>a+d.y,0)
-    const avg = sum/data.length
-    const last = data[data.length-1]?.y ?? 0
-    const peak = data.reduce((a,d)=>Math.max(a,d.y),0)
-    $('#big-'+m.id).innerHTML = m.total
-      ? sum.toFixed(m.dp)+' <small>'+m.unit+' total · '+avg.toFixed(m.dp)+' avg/bucket · last '+last.toFixed(m.dp)+'</small>'
-      : m.peak
-      ? avg.toFixed(m.dp)+' <small>'+m.unit+' avg · peak '+peak.toFixed(m.dp)+' · last '+last.toFixed(m.dp)+'</small>'
-      : last.toFixed(m.dp)+' <small>'+m.unit+' last · '+avg.toFixed(m.dp)+' avg</small>'
+    ch.$rawTotal = rows.reduce((sum,r)=>sum+m.val(r,span),0)
+    renderBig(m,ch)
   }
   await loadTotals()
   setStatus('loaded '+rows.length+' buckets · '+($('#project').selectedOptions[0]?.text||'')+
@@ -278,7 +342,6 @@ function setPolling(on){
   $('#reset').addEventListener('click', ()=> Object.values(charts).forEach(c=>c.resetZoom()))
   $('#forget').addEventListener('click', ()=>{ localStorage.removeItem(KEY_LS); $('#key').value=''; setPolling(false); $('#poll').checked=false; setStatus('key forgotten') })
   $('#poll').addEventListener('change', e=> setPolling(e.target.checked))
-  $('#cumulative').addEventListener('change', e=>{ cumulative=e.target.checked; tick() })
   $('#f').addEventListener('submit', e=>{ e.preventDefault(); tick() })
 
   if(saved){
