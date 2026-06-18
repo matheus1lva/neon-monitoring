@@ -39,12 +39,16 @@ label.chk input { width:auto }
 .card .big small { font-size:11px; color:#8b949e; font-weight:400; margin-left:6px }
 
 .chart-wrap { position:relative; height:150px }
+/* Absolutely position the canvas so it never contributes to the wrapper's height — the
+   wrapper height (150px or flex below) drives Chart.js sizing, avoiding the resize feedback
+   loop that oversized/chopped the fullscreen chart. */
+.chart-wrap > canvas { position:absolute; top:0; left:0 }
 .skeleton { position:absolute; inset:0; border-radius:6px; background:linear-gradient(90deg,#0f141a,#1b222b,#0f141a); background-size:200% 100%; animation:sh 1.2s ease-in-out infinite }
 @keyframes sh { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
 
-/* Fullscreen: the card fills the viewport below the form; the chart-wrap flexes to fill it. */
+/* Fullscreen: opaque card covers the viewport; title + X stay on top, chart-wrap flexes to fill. */
 body.full-chart { overflow:hidden }
-.card.fullscreen { position:fixed; left:0; right:0; top:var(--full-top,120px); bottom:0; z-index:20; border-radius:0; border-left:0; border-right:0; display:flex; flex-direction:column; padding:14px 20px 18px }
+.card.fullscreen { position:fixed; inset:0; z-index:30; border-radius:0; border:0; display:flex; flex-direction:column; padding:14px 20px 18px; background:#0f141a }
 .card.fullscreen .chart-wrap { flex:1; height:auto; min-height:0 }
 
 a { color:#58a6ff }

@@ -139,19 +139,13 @@ export default function App() {
 
   function toggleCum(id) { setCumulative(c => ({ ...c, [id]: !c[id] })) }
 
-  function toggleFull(id) {
-    setFullscreenId(cur => {
-      const next = cur === id ? null : id
-      if (next) {
-        const formBottom = document.querySelector('form')?.getBoundingClientRect().bottom || 120
-        document.documentElement.style.setProperty('--full-top', formBottom + 'px')
-        document.body.classList.add('full-chart')
-      } else {
-        document.body.classList.remove('full-chart')
-      }
-      return next
-    })
-  }
+  function toggleFull(id) { setFullscreenId(cur => (cur === id ? null : id)) }
+
+  // Lock body scroll while any chart is fullscreen.
+  useEffect(() => {
+    document.body.classList.toggle('full-chart', fullscreenId != null)
+    return () => document.body.classList.remove('full-chart')
+  }, [fullscreenId])
 
   const chartProps = m => ({
     m, span, loading, resetNonce,
