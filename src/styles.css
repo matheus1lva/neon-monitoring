@@ -1,0 +1,59 @@
+:root { color-scheme: dark }
+* { box-sizing: border-box }
+body { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; background:#0d1117; color:#e6edf3 }
+
+header { padding: 14px 20px; border-bottom: 1px solid #21262d; display:flex; align-items:center; gap:14px }
+h1 { font-size: 14px; margin: 0; font-weight: 600 }
+.dot { width:7px;height:7px;border-radius:50%;background:#3fb950;display:inline-block;box-shadow:0 0 6px #3fb950 }
+.dot.off { background:#6e7681; box-shadow:none }
+.spinner { width:13px;height:13px;border-radius:50%;border:2px solid #30363d;border-top-color:#58a6ff;display:inline-block;animation:spin .7s linear infinite }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 14px 20px; border-bottom: 1px solid #21262d }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #8b949e }
+input, select, button { font: inherit; background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:6px; padding:6px 8px }
+input:focus, select:focus { outline: none; border-color:#58a6ff }
+button { cursor: pointer; background:#238636; border-color:#2ea043; color:#fff; font-weight:600 }
+button:hover { filter:brightness(1.1) }
+button.ghost { background:#21262d; border-color:#30363d; color:#e6edf3; font-weight:400 }
+label.chk { flex-direction:row; align-items:center; gap:6px; font-size:12px; color:#e6edf3 }
+label.chk input { width:auto }
+
+#status { padding: 8px 20px; color:#8b949e; min-height: 16px; border-bottom:1px solid #21262d }
+#status.err { color:#f85149 }
+
+#grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; padding:16px 20px }
+.gsec { grid-column:1/-1; font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.04em; margin:6px 0 -4px }
+.gnote { color:#f85149; text-transform:none; letter-spacing:0; margin-left:8px }
+
+.card { border:1px solid #21262d; border-radius:10px; padding:12px 14px; background:#0f141a }
+.card-head { display:flex; align-items:center; gap:10px; margin-bottom:2px }
+.card h2 { font-size:12px; margin:0; font-weight:600 }
+.chart-actions { margin-left:auto; display:flex; gap:6px; align-items:center }
+.chart-actions button { padding:3px 7px; border-radius:999px; background:#21262d; border-color:#30363d; color:#8b949e; font-size:11px; font-weight:600 }
+.chart-actions button:hover { filter:brightness(1.15) }
+.chart-actions button.on { background:#238636; border-color:#2ea043; color:#fff }
+.full.on { background:#da3633; border-color:#f85149; color:#fff }
+.card .sub { font-size:11px; color:#8b949e; margin-bottom:8px }
+.card .big { font-size:18px; font-weight:600 }
+.card .big small { font-size:11px; color:#8b949e; font-weight:400; margin-left:6px }
+
+.chart-wrap { position:relative; height:150px }
+.skeleton { position:absolute; inset:0; border-radius:6px; background:linear-gradient(90deg,#0f141a,#1b222b,#0f141a); background-size:200% 100%; animation:sh 1.2s ease-in-out infinite }
+@keyframes sh { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
+
+/* Fullscreen: the card fills the viewport below the form; the chart-wrap flexes to fill it. */
+body.full-chart { overflow:hidden }
+.card.fullscreen { position:fixed; left:0; right:0; top:var(--full-top,120px); bottom:0; z-index:20; border-radius:0; border-left:0; border-right:0; display:flex; flex-direction:column; padding:14px 20px 18px }
+.card.fullscreen .chart-wrap { flex:1; height:auto; min-height:0 }
+
+a { color:#58a6ff }
+#totals { padding:14px 20px 0 }
+#totals .hint { color:#6e7681; font-size:12px }
+.tsec { font-size:11px; color:#8b949e; margin-bottom:8px; text-transform:uppercase; letter-spacing:.04em }
+.tcards { display:grid; grid-template-columns:repeat(5,1fr); gap:10px }
+.tcard { border:1px solid #21262d; border-radius:8px; padding:10px 12px; background:#0f141a }
+.tcard .tlabel { font-size:11px; color:#8b949e; margin-bottom:4px }
+.tcard .tval { font-size:16px; font-weight:600 }
+
+@media (max-width:900px){ #grid{ grid-template-columns:1fr } .tcards{ grid-template-columns:repeat(2,1fr) } }

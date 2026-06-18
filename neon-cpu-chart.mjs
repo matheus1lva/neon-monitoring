@@ -1,9 +1,10 @@
-// Local dev server. Run: bun neon-cpu-chart.mjs  ->  open http://localhost:8787
-// Prod runs on Vercel via api/index.js (edge function); both share the same handler.
+// Local dev API server. Run: bun run api  (serves the /api proxy on :8787)
+// Then run: bun run dev  (Vite serves the React UI and proxies /api here).
+// Prod runs the same handler as a Vercel edge function (api/index.js).
 import handler from './api/index.js'
 
 const PORT = 8787
 
 Bun.serve({ port: PORT, fetch: handler })
 
-console.log(`neon dashboard → http://localhost:${PORT}`)
+console.log(`neon api proxy → http://localhost:${PORT}/api/*  (run \`bun run dev\` for the UI)`)
