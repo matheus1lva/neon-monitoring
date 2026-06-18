@@ -192,7 +192,6 @@ export default function App() {
           <select value={gran} onChange={e => onGranChange(e.target.value)}>
             <option value="hourly">hourly</option>
             <option value="daily">daily</option>
-            <option value="monthly">monthly</option>
           </select>
         </label>
         <button type="submit">Load</button>
