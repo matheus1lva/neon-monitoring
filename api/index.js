@@ -4,6 +4,9 @@
 //
 // NOTE: the public API key exposes ONLY consumption_history (4 metrics, hourly):
 //   compute_time_seconds, active_time_seconds, written_data_bytes, synthetic_storage_size_bytes.
+// v2 (/consumption_history/v2/projects) adds billing-aligned metrics (compute units,
+//   storage breakdown, network transfer, extra branches); requires the metrics query
+//   param and a key with org consumption scope. v1 is kept for the finer CPU/activity series.
 export const config = { runtime: 'edge' }
 
 const NEON = 'https://console.neon.tech/api/v2'
@@ -44,6 +47,8 @@ const HTML = /* html */ `<!doctype html>
   #status { padding: 8px 20px; color:#8b949e; min-height: 16px; border-bottom:1px solid #21262d }
   #status.err { color:#f85149 }
   #grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; padding:16px 20px }
+  .gsec { grid-column:1/-1; font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:.04em; margin:6px 0 -4px }
+  .gnote { color:#f85149; text-transform:none; letter-spacing:0; margin-left:8px }
   .card { border:1px solid #21262d; border-radius:10px; padding:12px 14px; background:#0f141a }
   .card-head { display:flex; align-items:center; gap:10px; margin-bottom:2px }
   .card h2 { font-size:12px; margin:0; font-weight:600 }
@@ -71,7 +76,7 @@ const HTML = /* html */ `<!doctype html>
 </style>
 </head>
 <body>
-<header><span id="live" class="dot off"></span><h1>Neon usage — consumption_history</h1></header>
+<header><span id="live" class="dot off"></span><h1>Neon usage — consumption_history v1 + v2</h1></header>
 <form id="f">
   <label>API key (napi_…)<input id="key" type="password" size="30" placeholder="napi_..." autocomplete="off"/></label>
   <label>Org<select id="org"></select></label>
@@ -92,7 +97,7 @@ const HTML = /* html */ `<!doctype html>
 const $ = s => document.querySelector(s)
 const KEY_LS = 'neon_api_key'
 let charts = {}, pollTimer = null, busy = false
-let cumulative = { cpuhours:false, active:false, written:false }
+let cumulative = { cpuhours:false, active:false, written:false, cu:false, pubnet:false, privnet:false }
 let projNames = {}                                   // project_id -> display name (filled by loadProjects)
 
 const METRICS = [
@@ -106,6 +111,29 @@ const METRICS = [
     val:r=>r.written_data_bytes/1e6, unit:'MB', dp:1, total:true, cumulative:true },
   { id:'storage', title:'Storage size',  sub:'synthetic_storage_size_bytes / 1e9 (snapshot, not summed)', color:'#bc8cff',
     val:r=>r.synthetic_storage_size_bytes/1e9, unit:'GB', dp:2, total:false },
+]
+
+// v2 consumption_history (/consumption_history/v2/projects) — billing-aligned metrics.
+// key is the API metric_name (also sent in the required metrics= param); rows are flattened
+// from the v2 [{metric_name,value}] form into r[key] before these accessors run. Additive
+// metrics (compute units, network transfer) carry cumulative:true for the running-sum toggle.
+const METRICS_V2 = [
+  { id:'cu',      key:'compute_unit_seconds',          title:'Compute units',          sub:'compute_unit_seconds / 3600 — billing compute (CU-hours)',   color:'#388bfd',
+    val:r=>r.compute_unit_seconds/3600,          unit:'CU-hrs',   dp:2, total:true, cumulative:true },
+  { id:'rootbr',  key:'root_branch_bytes_month',       title:'Root branch storage',    sub:'root_branch_bytes_month / 1e9 (primary branches)',          color:'#bc8cff',
+    val:r=>r.root_branch_bytes_month/1e9,         unit:'GB',       dp:2 },
+  { id:'childbr', key:'child_branch_bytes_month',      title:'Child branch storage',   sub:'child_branch_bytes_month / 1e9 (delta from parent)',         color:'#a371f7',
+    val:r=>r.child_branch_bytes_month/1e9,        unit:'GB',       dp:2 },
+  { id:'pitr',    key:'instant_restore_bytes_month',   title:'Instant restore (PITR)', sub:'instant_restore_bytes_month / 1e9 (WAL history)',            color:'#39c5cf',
+    val:r=>r.instant_restore_bytes_month/1e9,     unit:'GB',       dp:2 },
+  { id:'snap',    key:'snapshot_storage_bytes_month',  title:'Snapshot storage',       sub:'snapshot_storage_bytes_month / 1e9',                         color:'#db61a2',
+    val:r=>r.snapshot_storage_bytes_month/1e9,    unit:'GB',       dp:2 },
+  { id:'pubnet',  key:'public_network_transfer_bytes', title:'Public egress',          sub:'public_network_transfer_bytes / 1e6 (public internet)',      color:'#d29922',
+    val:r=>r.public_network_transfer_bytes/1e6,   unit:'MB',       dp:1, total:true, cumulative:true },
+  { id:'privnet', key:'private_network_transfer_bytes',title:'Private transfer',       sub:'private_network_transfer_bytes / 1e6 (PrivateLink)',         color:'#e3b341',
+    val:r=>r.private_network_transfer_bytes/1e6,  unit:'MB',       dp:1, total:true, cumulative:true },
+  { id:'xbranch', key:'extra_branches_month',          title:'Extra branches',         sub:'extra_branches_month (active branches over plan allowance)',  color:'#f85149',
+    val:r=>r.extra_branches_month,                unit:'branches', dp:0, peak:true },
 ]
 
 // Current-billing-period totals the consumption_history series does NOT expose.
@@ -162,7 +190,7 @@ async function loadProjects(orgId){
 }
 
 function buildGrid(){
-  $('#grid').innerHTML = METRICS.map(m=>
+  const card = m =>
     '<div class="card"><div class="card-head"><h2>'+m.title+'</h2>'+
     '<div class="chart-actions">'+
     (m.cumulative ? '<button type="button" class="cum" data-cum="'+m.id+'" aria-pressed="false">cumulative</button>' : '')+
@@ -170,8 +198,10 @@ function buildGrid(){
     '</div><div class="sub">'+m.sub+'</div>'+
     '<div class="big" id="big-'+m.id+'">–</div>'+
     '<canvas id="cv-'+m.id+'" height="150"></canvas></div>'
-  ).join('')
-  for(const m of METRICS){
+  $('#grid').innerHTML =
+    '<div class="gsec">consumption_history · v1 (CPU &amp; activity)</div>' + METRICS.map(card).join('') +
+    '<div class="gsec">consumption_history · v2 (billing-aligned) <span id="v2note" class="gnote"></span></div>' + METRICS_V2.map(card).join('')
+  for(const m of [...METRICS, ...METRICS_V2]){
     charts[m.id] = new Chart($('#cv-'+m.id), {
       type:'line',
       data:{ datasets:[{ label:m.unit, data:[], borderColor:m.color, backgroundColor:m.color+'22',
@@ -243,6 +273,16 @@ function rowsFrom(j){
     .sort((a,b)=>a.timeframe_start.localeCompare(b.timeframe_start))
 }
 
+// v2 rows carry metrics as [{metric_name,value}]; flatten to r[metric_name] in place so
+// rowsFrom and the m.val accessors work the same as for v1's flat rows.
+function flattenV2(j){
+  for(const p of j.projects||[])
+    for(const pe of p.periods||[])
+      for(const r of pe.consumption||[])
+        for(const mm of r.metrics||[]) r[mm.metric_name] = mm.value
+  return j
+}
+
 function bucketPoints(rows,m,span,accumulate){
   const buckets = new Map()
   for(const r of rows){
@@ -254,6 +294,21 @@ function bucketPoints(rows,m,span,accumulate){
     x:new Date(t).getTime(),
     y:accumulate ? (acc+=y) : y
   }))
+}
+
+// Draw one metric chart from a row set (shared by the v1 and v2 metric loops). Empty rows
+// (e.g. v2 unavailable on the plan) blank the chart and show a dash.
+function renderMetric(m, rows, span){
+  const ch = charts[m.id]
+  if(!rows.length){ ch.data.datasets=[]; ch.update('none'); ch.$rawTotal=0; $('#big-'+m.id).innerHTML='–'; return }
+  const isCumulative = m.cumulative && cumulative[m.id]
+  ch.options.scales.y.stacked = false
+  ch.options.plugins.legend.display = false
+  ch.data.datasets = [{ label:m.unit, data: bucketPoints(rows,m,span,isCumulative),
+    borderColor:m.color, backgroundColor:m.color+'22', fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }]
+  ch.update('none')                                  // preserves zoom
+  ch.$rawTotal = rows.reduce((sum,r)=>sum+m.val(r,span),0)
+  renderBig(m,ch)
 }
 
 function renderBig(m,ch){
@@ -287,24 +342,30 @@ async function load(){
     const projectIds = [...$('#project').options].map(o=>o.value).filter(Boolean)
     if(projectIds.length) q.set('project_ids', projectIds.join(','))
   }
-  const j = await api('/consumption?'+q.toString())
+  const qv = new URLSearchParams(q)                       // v2: same params + explicit metrics list
+  qv.set('metrics', METRICS_V2.map(m=>m.key).join(','))
+
+  const [j, j2] = await Promise.all([                     // v2 only on usage-based plans — tolerate failure
+    api('/consumption?'+q.toString()),
+    api('/consumption_v2?'+qv.toString()).catch(e=>({ __err:e.message })),
+  ])
   const rows = rowsFrom(j)
   if(!rows.length){ setStatus('no data in range', true); return }
 
   const span = spanSec()
   if(!Object.keys(charts).length) buildGrid()
-  for(const m of METRICS){
-    const ch = charts[m.id]
-    const isCumulative = m.cumulative && cumulative[m.id]
-    ch.options.scales.y.stacked = false
-    ch.options.plugins.legend.display = false
-    ch.data.datasets = [{ label:m.unit, data: bucketPoints(rows,m,span,isCumulative),
-      borderColor:m.color, backgroundColor:m.color+'22', fill:true, tension:.25, pointRadius:0, borderWidth:1.5 }]
-    ch.update('none')                                  // preserves zoom
 
-    ch.$rawTotal = rows.reduce((sum,r)=>sum+m.val(r,span),0)
-    renderBig(m,ch)
+  for(const m of METRICS) renderMetric(m, rows, span)
+
+  if(j2.__err){                                           // keep v1 charts, blank v2 with a note
+    for(const m of METRICS_V2) renderMetric(m, [], span)
+    $('#v2note').textContent = 'v2 unavailable: '+j2.__err
+  } else {
+    const rows2 = rowsFrom(flattenV2(j2))
+    for(const m of METRICS_V2) renderMetric(m, rows2, span)
+    $('#v2note').textContent = ''
   }
+
   await loadTotals()
   setStatus('loaded '+rows.length+' buckets · '+($('#project').selectedOptions[0]?.text||'')+
             ($('#poll').checked?' · live':'')+' · drag chart to zoom')
@@ -370,6 +431,8 @@ export default async function handler(req) {
     }
     if (p === '/api/consumption')
       return neon('/consumption_history/projects?' + url.searchParams.toString(), key)
+    if (p === '/api/consumption_v2')
+      return neon('/consumption_history/v2/projects?' + url.searchParams.toString(), key)
     // Project/branch detail expose current-period totals (data_transfer_bytes,
     // logical_size, data_storage_bytes_hour, cpu_used_sec) absent from consumption_history.
     if (p === '/api/project') {
