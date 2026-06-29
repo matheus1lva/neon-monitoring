@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
 import { METRICS, METRICS_V2, SNAP, rowsFrom, flattenV2 } from './metrics.js'
 import MetricChart from './MetricChart.jsx'
+import QueryPerf from './QueryPerf.jsx'
 
 const KEY_LS = 'neon_api_key'
 const isoDay = d => d.toISOString().slice(0, 10)
@@ -213,6 +214,8 @@ export default function App() {
           </>
         ) : null}
       </div>
+
+      {project && <QueryPerf project={project} apiKey={key} projName={projName(project)} />}
 
       <div id="grid">
         <div className="gsec">consumption_history · v1 (CPU &amp; activity)</div>
