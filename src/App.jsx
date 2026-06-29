@@ -25,6 +25,7 @@ export default function App() {
   const [cumulative, setCumulative] = useState({})           // metric id -> bool
   const [fullscreenId, setFullscreenId] = useState(null)
   const [resetNonce, setResetNonce] = useState(0)
+  const [activeTab, setActiveTab] = useState('usage')
 
   const [status, setStatus] = useState('enter API key →')
   const [statusErr, setStatusErr] = useState(false)
@@ -197,35 +198,50 @@ export default function App() {
 
       <div id="status" className={statusErr ? 'err' : ''}>{status}</div>
 
-      <div id="totals">
-        {!project ? (
-          <div className="hint">select a project to see transfer / DB-size / storage totals (current billing period — not in consumption_history)</div>
-        ) : snap?.err ? (
-          <div className="hint">totals unavailable</div>
-        ) : snap ? (
-          <>
-            <div className="tsec">project totals · current billing period</div>
-            <div className="tcards">
-              {SNAP.map(s => {
-                const v = s.src === 'branches' ? s.val(snap.bs) : s.val(snap.p)
-                return <div className="tcard" key={s.id}><div className="tlabel">{s.title}</div><div className="tval">{s.fmt(v)}</div></div>
-              })}
+      <div className="tabs" role="tablist" aria-label="dashboard sections">
+        <button type="button" role="tab" aria-selected={activeTab === 'usage'} className={activeTab === 'usage' ? 'on' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'queries'} className={activeTab === 'queries' ? 'on' : ''} onClick={() => setActiveTab('queries')}>Query performance</button>
+      </div>
+
+      {activeTab === 'usage' ? (
+        <>
+          <div id="totals">
+            {!project ? (
+              <div className="hint">select a project to see transfer / DB-size / storage totals (current billing period — not in consumption_history)</div>
+            ) : snap?.err ? (
+              <div className="hint">totals unavailable</div>
+            ) : snap ? (
+              <>
+                <div className="tsec">project totals · current billing period</div>
+                <div className="tcards">
+                  {SNAP.map(s => {
+                    const v = s.src === 'branches' ? s.val(snap.bs) : s.val(snap.p)
+                    return <div className="tcard" key={s.id}><div className="tlabel">{s.title}</div><div className="tval">{s.fmt(v)}</div></div>
+                  })}
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div id="grid">
+            <div className="gsec">consumption_history · v1 (CPU &amp; activity)</div>
+            {METRICS.map(m => <MetricChart key={m.id} {...chartProps(m)} rows={v1Rows} />)}
+            <div className="gsec">
+              consumption_history · v2 (billing-aligned)
+              {v2Error && <span className="gnote">v2 unavailable: {v2Error}</span>}
             </div>
-          </>
-        ) : null}
-      </div>
-
-      {project && <QueryPerf project={project} apiKey={key} projName={projName(project)} />}
-
-      <div id="grid">
-        <div className="gsec">consumption_history · v1 (CPU &amp; activity)</div>
-        {METRICS.map(m => <MetricChart key={m.id} {...chartProps(m)} rows={v1Rows} />)}
-        <div className="gsec">
-          consumption_history · v2 (billing-aligned)
-          {v2Error && <span className="gnote">v2 unavailable: {v2Error}</span>}
+            {METRICS_V2.map(m => <MetricChart key={m.id} {...chartProps(m)} rows={v2Rows} />)}
+          </div>
+        </>
+      ) : (
+        <div className="tab-panel">
+          {project ? (
+            <QueryPerf project={project} apiKey={key} projName={projName(project)} />
+          ) : (
+            <div className="hint">select a project to see query performance</div>
+          )}
         </div>
-        {METRICS_V2.map(m => <MetricChart key={m.id} {...chartProps(m)} rows={v2Rows} />)}
-      </div>
+      )}
     </>
   )
 }
